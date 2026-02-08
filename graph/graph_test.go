@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func TestNewGraph(t *testing.T) {
 
 func TestAddEvidence(t *testing.T) {
 	g := New()
-	ev := g.AddEvidence("/home/user/project/main.go", "1-3,7,13-70")
+	ev := g.AddEvidence("/home/user/project/main.go", "1-3,7,13-70", "abc123def456")
 
 	if ev.ID == "" {
 		t.Fatal("expected non-empty ID")
@@ -33,6 +34,9 @@ func TestAddEvidence(t *testing.T) {
 	if ev.LineRef != "1-3,7,13-70" {
 		t.Errorf("expected line ref %q, got %q", "1-3,7,13-70", ev.LineRef)
 	}
+	if ev.GitCommit != "abc123def456" {
+		t.Errorf("expected git commit %q, got %q", "abc123def456", ev.GitCommit)
+	}
 	if ev.CreatedAt.IsZero() {
 		t.Error("expected non-zero created_at")
 	}
@@ -41,9 +45,18 @@ func TestAddEvidence(t *testing.T) {
 	}
 }
 
+func TestAddEvidenceRequiresGitCommit(t *testing.T) {
+	g := New()
+	ev := g.AddEvidence("/home/user/project/main.go", "1-3", "")
+
+	if ev != nil {
+		t.Error("expected nil for empty git commit")
+	}
+}
+
 func TestAddEvidenceRequiresAbsolutePath(t *testing.T) {
 	g := New()
-	ev := g.AddEvidence("relative/path.go", "1-3")
+	ev := g.AddEvidence("relative/path.go", "1-3", "abc123")
 
 	if ev != nil {
 		t.Error("expected nil for relative path")
@@ -71,7 +84,7 @@ func TestAddClaim(t *testing.T) {
 func TestLinkEvidenceToClaim(t *testing.T) {
 	g := New()
 	claim := g.AddClaim("Auth works")
-	ev := g.AddEvidence("/home/user/auth.go", "10-25")
+	ev := g.AddEvidence("/home/user/auth.go", "10-25", "abc123")
 
 	err := g.LinkEvidence(claim.ID, ev.ID)
 	if err != nil {
@@ -91,7 +104,7 @@ func TestLinkEvidenceToClaim(t *testing.T) {
 
 func TestLinkEvidenceInvalidClaim(t *testing.T) {
 	g := New()
-	ev := g.AddEvidence("/home/user/auth.go", "10-25")
+	ev := g.AddEvidence("/home/user/auth.go", "10-25", "abc123")
 
 	err := g.LinkEvidence("nonexistent", ev.ID)
 	if err == nil {
@@ -112,9 +125,9 @@ func TestLinkEvidenceInvalidEvidence(t *testing.T) {
 func TestGetEvidenceForClaim(t *testing.T) {
 	g := New()
 	claim := g.AddClaim("Auth works")
-	ev1 := g.AddEvidence("/home/user/auth.go", "10-25")
-	ev2 := g.AddEvidence("/home/user/auth_test.go", "1-50")
-	g.AddEvidence("/home/user/unrelated.go", "1-5") // not linked
+	ev1 := g.AddEvidence("/home/user/auth.go", "10-25", "abc123")
+	ev2 := g.AddEvidence("/home/user/auth_test.go", "1-50", "abc123")
+	g.AddEvidence("/home/user/unrelated.go", "1-5", "abc123") // not linked
 
 	g.LinkEvidence(claim.ID, ev1.ID)
 	g.LinkEvidence(claim.ID, ev2.ID)
@@ -135,7 +148,7 @@ func TestGetEvidenceForClaim(t *testing.T) {
 
 func TestGetEvidenceByID(t *testing.T) {
 	g := New()
-	ev := g.AddEvidence("/home/user/main.go", "1-10")
+	ev := g.AddEvidence("/home/user/main.go", "1-10", "abc123")
 
 	found := g.GetEvidence(ev.ID)
 	if found == nil {
@@ -172,5 +185,77 @@ func TestGetClaimByIDNotFound(t *testing.T) {
 	found := g.GetClaim("nonexistent")
 	if found != nil {
 		t.Error("expected nil for nonexistent claim")
+	}
+}
+
+// mockGitChecker is a test double for GitChecker
+type mockGitChecker struct {
+	changed map[string]bool // key: "commit:filepath"
+	err     error
+}
+
+func (m *mockGitChecker) HasFileChangedSince(commit, filePath string) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	key := commit + ":" + filePath
+	return m.changed[key], nil
+}
+
+func TestCheckEvidenceValidWhenUnchanged(t *testing.T) {
+	g := New()
+	ev := g.AddEvidence("/home/user/auth.go", "10-25", "abc123")
+
+	checker := &mockGitChecker{changed: map[string]bool{}}
+
+	valid, err := g.CheckEvidence(ev.ID, checker)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !valid {
+		t.Error("expected evidence to be valid when file has not changed")
+	}
+}
+
+func TestCheckEvidenceInvalidWhenChanged(t *testing.T) {
+	g := New()
+	ev := g.AddEvidence("/home/user/auth.go", "10-25", "abc123")
+
+	checker := &mockGitChecker{
+		changed: map[string]bool{
+			"abc123:/home/user/auth.go": true,
+		},
+	}
+
+	valid, err := g.CheckEvidence(ev.ID, checker)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if valid {
+		t.Error("expected evidence to be invalid when file has changed")
+	}
+}
+
+func TestCheckEvidenceNotFound(t *testing.T) {
+	g := New()
+	checker := &mockGitChecker{changed: map[string]bool{}}
+
+	_, err := g.CheckEvidence("nonexistent", checker)
+	if err == nil {
+		t.Error("expected error for nonexistent evidence")
+	}
+}
+
+func TestCheckEvidenceGitError(t *testing.T) {
+	g := New()
+	ev := g.AddEvidence("/home/user/auth.go", "10-25", "abc123")
+
+	checker := &mockGitChecker{
+		err: fmt.Errorf("git not found"),
+	}
+
+	_, err := g.CheckEvidence(ev.ID, checker)
+	if err == nil {
+		t.Error("expected error when git check fails")
 	}
 }

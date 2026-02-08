@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"trees/api"
+	"trees/graph"
 )
 
 func main() {
@@ -19,7 +20,7 @@ func main() {
 	}
 	storePath := filepath.Join(dataDir, "data.json")
 
-	handler, err := api.NewHandler(storePath)
+	handler, err := api.NewHandler(storePath, &graph.ExecGitChecker{})
 	if err != nil {
 		log.Fatal(err)
 	}

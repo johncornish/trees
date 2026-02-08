@@ -11,6 +11,7 @@ type EvidenceNode struct {
 	ID        string    `json:"id"`
 	FilePath  string    `json:"file_path"`
 	LineRef   string    `json:"line_ref"`
+	GitCommit string    `json:"git_commit"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -39,14 +40,18 @@ func New() *Graph {
 	}
 }
 
-func (g *Graph) AddEvidence(filePath, lineRef string) *EvidenceNode {
+func (g *Graph) AddEvidence(filePath, lineRef, gitCommit string) *EvidenceNode {
 	if !filepath.IsAbs(filePath) {
+		return nil
+	}
+	if gitCommit == "" {
 		return nil
 	}
 	ev := &EvidenceNode{
 		ID:        newID(),
 		FilePath:  filePath,
 		LineRef:   lineRef,
+		GitCommit: gitCommit,
 		CreatedAt: time.Now(),
 	}
 	g.Evidence[ev.ID] = ev
@@ -88,6 +93,21 @@ func (g *Graph) GetEvidenceForClaim(claimID string) []*EvidenceNode {
 
 func (g *Graph) GetEvidence(id string) *EvidenceNode {
 	return g.Evidence[id]
+}
+
+// CheckEvidence returns true if the evidence is still valid (the referenced
+// file has not changed since the recorded git commit). Returns an error if
+// the evidence ID is not found or the git check fails.
+func (g *Graph) CheckEvidence(id string, checker GitChecker) (bool, error) {
+	ev, ok := g.Evidence[id]
+	if !ok {
+		return false, fmt.Errorf("evidence %q not found", id)
+	}
+	changed, err := checker.HasFileChangedSince(ev.GitCommit, ev.FilePath)
+	if err != nil {
+		return false, err
+	}
+	return !changed, nil
 }
 
 func (g *Graph) GetClaim(id string) *ClaimNode {

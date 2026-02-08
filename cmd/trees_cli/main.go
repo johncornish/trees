@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -73,6 +74,7 @@ func printUsage() {
 Commands:
   post-evidence --file <path> --lines <ref> [--claim <id>]
       Post a file reference as evidence. Path is resolved to absolute.
+      Git commit is auto-detected from the file's repository HEAD.
       Optionally link to an existing claim.
 
   create-claim <content>
@@ -156,6 +158,16 @@ func parseFlag(args []string, flag string) string {
 	return ""
 }
 
+func gitHeadCommit(dir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("detecting git commit: %v (is %s in a git repo?)", err, dir)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func postEvidence(client *Client, args []string) error {
 	filePath := parseFlag(args, "--file")
 	lineRef := parseFlag(args, "--lines")
@@ -174,9 +186,16 @@ func postEvidence(client *Client, args []string) error {
 		filePath = abs
 	}
 
+	// Auto-detect git commit from file's directory
+	gitCommit, err := gitHeadCommit(filepath.Dir(filePath))
+	if err != nil {
+		return err
+	}
+
 	result, err := client.post("/evidence", map[string]string{
-		"file_path": filePath,
-		"line_ref":  lineRef,
+		"file_path":  filePath,
+		"line_ref":   lineRef,
+		"git_commit": gitCommit,
 	})
 	if err != nil {
 		return err
@@ -186,6 +205,7 @@ func postEvidence(client *Client, args []string) error {
 	fmt.Printf("Created evidence %s\n", evID)
 	fmt.Printf("  file: %s\n", result["file_path"])
 	fmt.Printf("  lines: %s\n", result["line_ref"])
+	fmt.Printf("  commit: %s\n", result["git_commit"])
 
 	// Optionally link to claim
 	if claimID != "" {
@@ -283,7 +303,11 @@ func showClaim(client *Client, args []string) error {
 		fmt.Printf("  evidence (%d):\n", len(evidence))
 		for _, e := range evidence {
 			ev := e.(map[string]interface{})
-			fmt.Printf("    %s  %s  %s\n", ev["id"], ev["file_path"], ev["line_ref"])
+			status := "VALID"
+			if valid, ok := ev["valid"].(bool); ok && !valid {
+				status = "INVALID"
+			}
+			fmt.Printf("    [%s] %s  %s  %s  @%s\n", status, ev["id"], ev["file_path"], ev["line_ref"], ev["git_commit"])
 		}
 	} else {
 		fmt.Println("  evidence: (none)")
@@ -308,7 +332,7 @@ func listEvidence(client *Client) error {
 	}
 
 	for _, e := range evidence {
-		fmt.Printf("%s  %s  %s\n", e["id"], e["file_path"], e["line_ref"])
+		fmt.Printf("%s  %s  %s  @%s\n", e["id"], e["file_path"], e["line_ref"], e["git_commit"])
 	}
 	return nil
 }
@@ -331,6 +355,14 @@ func showEvidence(client *Client, args []string) error {
 	fmt.Printf("Evidence: %s\n", ev["id"])
 	fmt.Printf("  file: %s\n", ev["file_path"])
 	fmt.Printf("  lines: %s\n", ev["line_ref"])
+	fmt.Printf("  commit: %s\n", ev["git_commit"])
+	if valid, ok := ev["valid"].(bool); ok {
+		if valid {
+			fmt.Println("  status: VALID")
+		} else {
+			fmt.Println("  status: INVALID (file changed since commit)")
+		}
+	}
 	fmt.Printf("  created: %s\n", ev["created_at"])
 	return nil
 }

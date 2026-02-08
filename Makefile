@@ -3,7 +3,7 @@
 all: build
 
 build:
-	go build -o trees-cli ./cmd/trees-cli
+	go build -o trees-cli ./cmd/trees_cli
 	go build -o trees-server .
 
 test:
