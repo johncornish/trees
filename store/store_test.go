@@ -31,7 +31,7 @@ func TestSaveAndLoad(t *testing.T) {
 	g := s.Graph()
 
 	claim := g.AddClaim("test claim")
-	ev := g.AddEvidence("/home/user/file.go", "1-10")
+	ev := g.AddEvidence("/home/user/file.go", "1-10", "abc123")
 	g.LinkEvidence(claim.ID, ev.ID)
 
 	if err := s.Save(); err != nil {

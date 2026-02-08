@@ -7,13 +7,34 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"trees/graph"
 )
+
+// mockGitChecker always returns a fixed result for testing
+type mockGitChecker struct {
+	changed bool
+}
+
+func (m *mockGitChecker) HasFileChangedSince(commit, filePath string) (bool, error) {
+	return m.changed, nil
+}
 
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "data.json")
-	h, err := NewHandler(path)
+	h, err := NewHandler(path, &mockGitChecker{changed: false})
+	if err != nil {
+		t.Fatalf("unexpected error creating handler: %v", err)
+	}
+	return h
+}
+
+func newTestHandlerWithChecker(t *testing.T, checker graph.GitChecker) *Handler {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "data.json")
+	h, err := NewHandler(path, checker)
 	if err != nil {
 		t.Fatalf("unexpected error creating handler: %v", err)
 	}
@@ -115,7 +136,7 @@ func TestGetClaimNotFound(t *testing.T) {
 
 func TestCreateEvidence(t *testing.T) {
 	h := newTestHandler(t)
-	body := `{"file_path": "/home/user/project/main.go", "line_ref": "1-3,7,13-70"}`
+	body := `{"file_path": "/home/user/project/main.go", "line_ref": "1-3,7,13-70", "git_commit": "abc123def456"}`
 	req := httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -138,11 +159,28 @@ func TestCreateEvidence(t *testing.T) {
 	if resp["line_ref"] != "1-3,7,13-70" {
 		t.Errorf("expected line_ref, got %v", resp["line_ref"])
 	}
+	if resp["git_commit"] != "abc123def456" {
+		t.Errorf("expected git_commit, got %v", resp["git_commit"])
+	}
+}
+
+func TestCreateEvidenceRequiresGitCommit(t *testing.T) {
+	h := newTestHandler(t)
+	body := `{"file_path": "/home/user/project/main.go", "line_ref": "1-3"}`
+	req := httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
 }
 
 func TestCreateEvidenceRejectsRelativePath(t *testing.T) {
 	h := newTestHandler(t)
-	body := `{"file_path": "relative/path.go", "line_ref": "1-3"}`
+	body := `{"file_path": "relative/path.go", "line_ref": "1-3", "git_commit": "abc123"}`
 	req := httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -157,7 +195,7 @@ func TestCreateEvidenceRejectsRelativePath(t *testing.T) {
 func TestListEvidence(t *testing.T) {
 	h := newTestHandler(t)
 
-	body := `{"file_path": "/home/user/file.go", "line_ref": "1-10"}`
+	body := `{"file_path": "/home/user/file.go", "line_ref": "1-10", "git_commit": "abc123"}`
 	req := httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -181,7 +219,7 @@ func TestListEvidence(t *testing.T) {
 func TestGetEvidence(t *testing.T) {
 	h := newTestHandler(t)
 
-	body := `{"file_path": "/home/user/file.go", "line_ref": "1-10"}`
+	body := `{"file_path": "/home/user/file.go", "line_ref": "1-10", "git_commit": "abc123"}`
 	req := httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -198,6 +236,40 @@ func TestGetEvidence(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["valid"] != true {
+		t.Errorf("expected valid=true, got %v", resp["valid"])
+	}
+}
+
+func TestGetEvidenceInvalidWhenFileChanged(t *testing.T) {
+	h := newTestHandlerWithChecker(t, &mockGitChecker{changed: true})
+
+	body := `{"file_path": "/home/user/file.go", "line_ref": "1-10", "git_commit": "abc123"}`
+	req := httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	var created map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&created)
+	id := created["id"].(string)
+
+	req = httptest.NewRequest(http.MethodGet, "/evidence/"+id, nil)
+	w = httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["valid"] != false {
+		t.Errorf("expected valid=false, got %v", resp["valid"])
+	}
 }
 
 func TestLinkEvidenceToClaim(t *testing.T) {
@@ -213,7 +285,7 @@ func TestLinkEvidenceToClaim(t *testing.T) {
 	claimID := claim["id"].(string)
 
 	// Create evidence
-	req = httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(`{"file_path": "/home/user/f.go", "line_ref": "1-5"}`))
+	req = httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(`{"file_path": "/home/user/f.go", "line_ref": "1-5", "git_commit": "abc123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	h.Mux().ServeHTTP(w, req)

@@ -9,16 +9,17 @@ import (
 )
 
 type Handler struct {
-	store *store.Store
-	mux   *http.ServeMux
+	store   *store.Store
+	checker graph.GitChecker
+	mux     *http.ServeMux
 }
 
-func NewHandler(storePath string) (*Handler, error) {
+func NewHandler(storePath string, checker graph.GitChecker) (*Handler, error) {
 	s, err := store.New(storePath)
 	if err != nil {
 		return nil, err
 	}
-	h := &Handler{store: s}
+	h := &Handler{store: s, checker: checker}
 	h.setupRoutes()
 	return h, nil
 }
@@ -79,6 +80,11 @@ func (h *Handler) listClaims(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(claims)
 }
 
+type evidenceWithValidity struct {
+	*graph.EvidenceNode
+	Valid bool `json:"valid"`
+}
+
 func (h *Handler) getClaim(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	g := h.store.Graph()
@@ -89,14 +95,16 @@ func (h *Handler) getClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	evidence := g.GetEvidenceForClaim(id)
-	if evidence == nil {
-		evidence = []*graph.EvidenceNode{}
+	rawEvidence := g.GetEvidenceForClaim(id)
+	evidence := make([]evidenceWithValidity, 0, len(rawEvidence))
+	for _, ev := range rawEvidence {
+		valid, _ := g.CheckEvidence(ev.ID, h.checker)
+		evidence = append(evidence, evidenceWithValidity{EvidenceNode: ev, Valid: valid})
 	}
 
 	resp := struct {
 		*graph.ClaimNode
-		Evidence []*graph.EvidenceNode `json:"evidence"`
+		Evidence []evidenceWithValidity `json:"evidence"`
 	}{
 		ClaimNode: claim,
 		Evidence:  evidence,
@@ -133,8 +141,9 @@ func (h *Handler) linkEvidence(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) createEvidence(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		FilePath string `json:"file_path"`
-		LineRef  string `json:"line_ref"`
+		FilePath  string `json:"file_path"`
+		LineRef   string `json:"line_ref"`
+		GitCommit string `json:"git_commit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "invalid JSON"}`, http.StatusBadRequest)
@@ -143,10 +152,10 @@ func (h *Handler) createEvidence(w http.ResponseWriter, r *http.Request) {
 
 	var ev *graph.EvidenceNode
 	h.store.WithGraph(func(g *graph.Graph) {
-		ev = g.AddEvidence(req.FilePath, req.LineRef)
+		ev = g.AddEvidence(req.FilePath, req.LineRef, req.GitCommit)
 	})
 	if ev == nil {
-		http.Error(w, `{"error": "file_path must be absolute"}`, http.StatusBadRequest)
+		http.Error(w, `{"error": "file_path must be absolute and git_commit is required"}`, http.StatusBadRequest)
 		return
 	}
 	h.store.Save()
@@ -177,6 +186,16 @@ func (h *Handler) getEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	valid, _ := g.CheckEvidence(id, h.checker)
+
+	resp := struct {
+		*graph.EvidenceNode
+		Valid bool `json:"valid"`
+	}{
+		EvidenceNode: ev,
+		Valid:        valid,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ev)
+	json.NewEncoder(w).Encode(resp)
 }
