@@ -1,6 +1,18 @@
-# Developer Guide: TDD Workflow
+# Developer Guide
 
-This document outlines the Test-Driven Development (TDD) workflow used in this project, based on principles from Robert C. Martin (Uncle Bob).
+## Project Purpose
+
+Trees exists to make it extremely easy for both AI and humans to reliably gather data about code and use it as reliable research for high quality development.
+
+Claims are statements about what code does. Evidence is a pointer to code (file + lines + git commit) that supports a claim. Evidence auto-invalidates when the referenced code changes past its recorded commit. This is the core value: you always know whether your understanding of the code is current or stale.
+
+**This purpose should drive all design decisions.** Keep the tool's surface area small. Every flag, endpoint, and concept that gets added is another place where a human forgets something or an AI hallucinates. When in doubt, automate instead of adding options, and leave things out instead of adding them.
+
+---
+
+## TDD Workflow
+
+This section outlines the Test-Driven Development (TDD) workflow used in this project, based on principles from Robert C. Martin (Uncle Bob).
 
 ## Table of Contents
 1. [Why TDD Matters: Symmetry Breaking](#why-tdd-matters-symmetry-breaking)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -71,9 +72,10 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: trees-cli <command> [args]
 
 Commands:
-  post-evidence --file <path> --lines <ref> --commit <hash> [--claim <id>]
+  post-evidence --file <path> --lines <ref> [--claim <id>]
       Post a file reference as evidence. Path is resolved to absolute.
-      Requires a git commit hash. Optionally link to an existing claim.
+      Git commit is auto-detected from the file's repository HEAD.
+      Optionally link to an existing claim.
 
   create-claim <content>
       Create a new claim node.
@@ -156,14 +158,23 @@ func parseFlag(args []string, flag string) string {
 	return ""
 }
 
+func gitHeadCommit(dir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("detecting git commit: %v (is %s in a git repo?)", err, dir)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func postEvidence(client *Client, args []string) error {
 	filePath := parseFlag(args, "--file")
 	lineRef := parseFlag(args, "--lines")
-	gitCommit := parseFlag(args, "--commit")
 	claimID := parseFlag(args, "--claim")
 
-	if filePath == "" || lineRef == "" || gitCommit == "" {
-		return fmt.Errorf("usage: post-evidence --file <path> --lines <ref> --commit <hash> [--claim <id>]")
+	if filePath == "" || lineRef == "" {
+		return fmt.Errorf("usage: post-evidence --file <path> --lines <ref> [--claim <id>]")
 	}
 
 	// Resolve to absolute path
@@ -173,6 +184,12 @@ func postEvidence(client *Client, args []string) error {
 			return fmt.Errorf("resolving path: %v", err)
 		}
 		filePath = abs
+	}
+
+	// Auto-detect git commit from file's directory
+	gitCommit, err := gitHeadCommit(filepath.Dir(filePath))
+	if err != nil {
+		return err
 	}
 
 	result, err := client.post("/evidence", map[string]string{
