@@ -35,9 +35,12 @@ func (h *Handler) setupRoutes() {
 	h.mux.HandleFunc("GET /claims", h.listClaims)
 	h.mux.HandleFunc("GET /claims/{id}", h.getClaim)
 	h.mux.HandleFunc("POST /claims/{id}/evidence", h.linkEvidence)
+	h.mux.HandleFunc("DELETE /claims/{id}", h.deleteClaim)
+	h.mux.HandleFunc("PUT /claims/{id}", h.updateClaim)
 	h.mux.HandleFunc("POST /evidence", h.createEvidence)
 	h.mux.HandleFunc("GET /evidence", h.listEvidence)
 	h.mux.HandleFunc("GET /evidence/{id}", h.getEvidence)
+	h.mux.HandleFunc("DELETE /evidence/{id}", h.deleteEvidence)
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
@@ -71,9 +74,16 @@ func (h *Handler) createClaim(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listClaims(w http.ResponseWriter, r *http.Request) {
 	g := h.store.Graph()
-	claims := make([]*graph.ClaimNode, 0, len(g.Claims))
-	for _, c := range g.Claims {
-		claims = append(claims, c)
+
+	query := r.URL.Query().Get("q")
+	var claims []*graph.ClaimNode
+	if query != "" {
+		claims = g.SearchClaims(query)
+	} else {
+		claims = make([]*graph.ClaimNode, 0, len(g.Claims))
+		for _, c := range g.Claims {
+			claims = append(claims, c)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -198,4 +208,67 @@ func (h *Handler) getEvidence(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) deleteClaim(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var deleted bool
+	h.store.WithGraph(func(g *graph.Graph) {
+		deleted = g.DeleteClaim(id)
+	})
+	if !deleted {
+		http.Error(w, `{"error": "claim not found"}`, http.StatusNotFound)
+		return
+	}
+	h.store.Save()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func (h *Handler) deleteEvidence(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var deleted bool
+	h.store.WithGraph(func(g *graph.Graph) {
+		deleted = g.DeleteEvidence(id)
+	})
+	if !deleted {
+		http.Error(w, `{"error": "evidence not found"}`, http.StatusNotFound)
+		return
+	}
+	h.store.Save()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func (h *Handler) updateClaim(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		http.Error(w, `{"error": "content is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var claim *graph.ClaimNode
+	h.store.WithGraph(func(g *graph.Graph) {
+		claim = g.UpdateClaim(id, req.Content)
+	})
+	if claim == nil {
+		http.Error(w, `{"error": "claim not found"}`, http.StatusNotFound)
+		return
+	}
+	h.store.Save()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(claim)
 }

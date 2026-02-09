@@ -259,3 +259,120 @@ func TestCheckEvidenceGitError(t *testing.T) {
 		t.Error("expected error when git check fails")
 	}
 }
+
+func TestDeleteClaim(t *testing.T) {
+	g := New()
+	claim := g.AddClaim("test claim")
+	ev := g.AddEvidence("/home/user/auth.go", "10-25", "abc123")
+	g.LinkEvidence(claim.ID, ev.ID)
+
+	deleted := g.DeleteClaim(claim.ID)
+	if !deleted {
+		t.Error("expected delete to return true")
+	}
+	if g.GetClaim(claim.ID) != nil {
+		t.Error("expected claim to be removed from graph")
+	}
+	if len(g.Edges) != 0 {
+		t.Errorf("expected edges to be cleaned up, got %d", len(g.Edges))
+	}
+	// Evidence should still exist (only the link is removed)
+	if g.GetEvidence(ev.ID) == nil {
+		t.Error("expected evidence to still exist after claim deletion")
+	}
+}
+
+func TestDeleteClaimNotFound(t *testing.T) {
+	g := New()
+	deleted := g.DeleteClaim("nonexistent")
+	if deleted {
+		t.Error("expected delete to return false for nonexistent claim")
+	}
+}
+
+func TestDeleteEvidence(t *testing.T) {
+	g := New()
+	claim := g.AddClaim("test claim")
+	ev := g.AddEvidence("/home/user/auth.go", "10-25", "abc123")
+	g.LinkEvidence(claim.ID, ev.ID)
+
+	deleted := g.DeleteEvidence(ev.ID)
+	if !deleted {
+		t.Error("expected delete to return true")
+	}
+	if g.GetEvidence(ev.ID) != nil {
+		t.Error("expected evidence to be removed from graph")
+	}
+	if len(g.Edges) != 0 {
+		t.Errorf("expected edges to be cleaned up, got %d", len(g.Edges))
+	}
+	// Claim should still exist
+	if g.GetClaim(claim.ID) == nil {
+		t.Error("expected claim to still exist after evidence deletion")
+	}
+}
+
+func TestDeleteEvidenceNotFound(t *testing.T) {
+	g := New()
+	deleted := g.DeleteEvidence("nonexistent")
+	if deleted {
+		t.Error("expected delete to return false for nonexistent evidence")
+	}
+}
+
+func TestUpdateClaim(t *testing.T) {
+	g := New()
+	claim := g.AddClaim("original content")
+
+	updated := g.UpdateClaim(claim.ID, "updated content")
+	if updated == nil {
+		t.Fatal("expected non-nil updated claim")
+	}
+	if updated.Content != "updated content" {
+		t.Errorf("expected content %q, got %q", "updated content", updated.Content)
+	}
+	// Verify it's the same object (same ID, same CreatedAt)
+	if updated.ID != claim.ID {
+		t.Errorf("expected same ID %q, got %q", claim.ID, updated.ID)
+	}
+}
+
+func TestUpdateClaimNotFound(t *testing.T) {
+	g := New()
+	updated := g.UpdateClaim("nonexistent", "content")
+	if updated != nil {
+		t.Error("expected nil for nonexistent claim")
+	}
+}
+
+func TestSearchClaims(t *testing.T) {
+	g := New()
+	g.AddClaim("The authentication module validates tokens")
+	g.AddClaim("The database layer handles connections")
+	g.AddClaim("Auth tokens are rotated hourly")
+
+	results := g.SearchClaims("auth")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+}
+
+func TestSearchClaimsNoMatch(t *testing.T) {
+	g := New()
+	g.AddClaim("The authentication module validates tokens")
+
+	results := g.SearchClaims("database")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestSearchClaimsCaseInsensitive(t *testing.T) {
+	g := New()
+	g.AddClaim("The Authentication Module")
+
+	results := g.SearchClaims("authentication")
+	if len(results) != 1 {
+		t.Errorf("expected 1 result for case-insensitive search, got %d", len(results))
+	}
+}

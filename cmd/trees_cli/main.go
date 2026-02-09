@@ -61,6 +61,26 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+	case "delete-claim":
+		if err := deleteClaim(client, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	case "delete-evidence":
+		if err := deleteEvidence(client, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	case "update-claim":
+		if err := updateClaim(client, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	case "search-claims":
+		if err := searchClaims(client, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -95,6 +115,18 @@ Commands:
   show-evidence <id>
       Show an evidence node.
 
+  delete-claim <id>
+      Delete a claim and unlink all its evidence.
+
+  delete-evidence <id>
+      Delete an evidence node and remove all links to it.
+
+  update-claim <id> <content>
+      Update the content of an existing claim.
+
+  search-claims <query>
+      Search claims by content (case-insensitive substring match).
+
 Environment:
   TREES_URL    Server URL (default: http://localhost:8080)
 `)
@@ -111,6 +143,37 @@ func (c *Client) post(path string, body interface{}) (map[string]interface{}, er
 		return nil, err
 	}
 	resp, err := c.http.Post(c.baseURL+path, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return readJSON(resp)
+}
+
+func (c *Client) put(path string, body interface{}) (map[string]interface{}, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPut, c.baseURL+path, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return readJSON(resp)
+}
+
+func (c *Client) delete(path string) (map[string]interface{}, error) {
+	req, err := http.NewRequest(http.MethodDelete, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -364,5 +427,80 @@ func showEvidence(client *Client, args []string) error {
 		}
 	}
 	fmt.Printf("  created: %s\n", ev["created_at"])
+	return nil
+}
+
+func deleteClaim(client *Client, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: delete-claim <id>")
+	}
+
+	_, err := client.delete("/claims/" + args[0])
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Deleted claim %s\n", args[0])
+	return nil
+}
+
+func deleteEvidence(client *Client, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: delete-evidence <id>")
+	}
+
+	_, err := client.delete("/evidence/" + args[0])
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Deleted evidence %s\n", args[0])
+	return nil
+}
+
+func updateClaim(client *Client, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: update-claim <id> <content>")
+	}
+
+	id := args[0]
+	content := strings.Join(args[1:], " ")
+
+	result, err := client.put("/claims/"+id, map[string]string{
+		"content": content,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Updated claim %s\n", result["id"])
+	fmt.Printf("  content: %s\n", result["content"])
+	return nil
+}
+
+func searchClaims(client *Client, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: search-claims <query>")
+	}
+
+	query := strings.Join(args, " ")
+	body, err := client.get("/claims?q=" + query)
+	if err != nil {
+		return err
+	}
+
+	var claims []map[string]interface{}
+	if err := json.Unmarshal(body, &claims); err != nil {
+		return err
+	}
+
+	if len(claims) == 0 {
+		fmt.Println("No matching claims.")
+		return nil
+	}
+
+	for _, c := range claims {
+		fmt.Printf("%s  %s\n", c["id"], c["content"])
+	}
 	return nil
 }

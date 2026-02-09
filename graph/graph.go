@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -112,6 +113,58 @@ func (g *Graph) CheckEvidence(id string, checker GitChecker) (bool, error) {
 
 func (g *Graph) GetClaim(id string) *ClaimNode {
 	return g.Claims[id]
+}
+
+func (g *Graph) DeleteClaim(id string) bool {
+	if _, ok := g.Claims[id]; !ok {
+		return false
+	}
+	delete(g.Claims, id)
+	// Remove all edges involving this claim
+	filtered := g.Edges[:0]
+	for _, e := range g.Edges {
+		if e.ClaimID != id {
+			filtered = append(filtered, e)
+		}
+	}
+	g.Edges = filtered
+	return true
+}
+
+func (g *Graph) DeleteEvidence(id string) bool {
+	if _, ok := g.Evidence[id]; !ok {
+		return false
+	}
+	delete(g.Evidence, id)
+	// Remove all edges involving this evidence
+	filtered := g.Edges[:0]
+	for _, e := range g.Edges {
+		if e.EvidenceID != id {
+			filtered = append(filtered, e)
+		}
+	}
+	g.Edges = filtered
+	return true
+}
+
+func (g *Graph) UpdateClaim(id, content string) *ClaimNode {
+	claim, ok := g.Claims[id]
+	if !ok {
+		return nil
+	}
+	claim.Content = content
+	return claim
+}
+
+func (g *Graph) SearchClaims(query string) []*ClaimNode {
+	query = strings.ToLower(query)
+	var results []*ClaimNode
+	for _, c := range g.Claims {
+		if strings.Contains(strings.ToLower(c.Content), query) {
+			results = append(results, c)
+		}
+	}
+	return results
 }
 
 func newID() string {

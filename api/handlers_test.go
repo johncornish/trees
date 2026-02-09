@@ -334,3 +334,168 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Errorf("expected body %q, got %q", "OK", w.Body.String())
 	}
 }
+
+func TestDeleteClaim(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create a claim
+	req := httptest.NewRequest(http.MethodPost, "/claims", strings.NewReader(`{"content": "to delete"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+	var created map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&created)
+	id := created["id"].(string)
+
+	// Delete it
+	req = httptest.NewRequest(http.MethodDelete, "/claims/"+id, nil)
+	w = httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	// Verify it's gone
+	req = httptest.NewRequest(http.MethodGet, "/claims/"+id, nil)
+	w = httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status %d after delete, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+func TestDeleteClaimNotFound(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodDelete, "/claims/nonexistent", nil)
+	w := httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+func TestDeleteEvidence(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create evidence
+	req := httptest.NewRequest(http.MethodPost, "/evidence", strings.NewReader(`{"file_path": "/home/user/f.go", "line_ref": "1-5", "git_commit": "abc123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+	var created map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&created)
+	id := created["id"].(string)
+
+	// Delete it
+	req = httptest.NewRequest(http.MethodDelete, "/evidence/"+id, nil)
+	w = httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	// Verify it's gone
+	req = httptest.NewRequest(http.MethodGet, "/evidence/"+id, nil)
+	w = httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status %d after delete, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+func TestUpdateClaim(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create a claim
+	req := httptest.NewRequest(http.MethodPost, "/claims", strings.NewReader(`{"content": "original"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+	var created map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&created)
+	id := created["id"].(string)
+
+	// Update it
+	req = httptest.NewRequest(http.MethodPut, "/claims/"+id, strings.NewReader(`{"content": "updated"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["content"] != "updated" {
+		t.Errorf("expected content %q, got %v", "updated", resp["content"])
+	}
+}
+
+func TestUpdateClaimNotFound(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPut, "/claims/nonexistent", strings.NewReader(`{"content": "updated"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+func TestSearchClaims(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create claims
+	for _, content := range []string{"auth module validates tokens", "database handles connections", "auth tokens are rotated"} {
+		body := `{"content": "` + content + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/claims", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.Mux().ServeHTTP(w, req)
+	}
+
+	// Search for "auth"
+	req := httptest.NewRequest(http.MethodGet, "/claims?q=auth", nil)
+	w := httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var resp []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if len(resp) != 2 {
+		t.Errorf("expected 2 matching claims, got %d", len(resp))
+	}
+}
+
+func TestSearchClaimsNoMatch(t *testing.T) {
+	h := newTestHandler(t)
+
+	body := `{"content": "something unrelated"}`
+	req := httptest.NewRequest(http.MethodPost, "/claims", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	// Search for something that doesn't match
+	req = httptest.NewRequest(http.MethodGet, "/claims?q=zzzzz", nil)
+	w = httptest.NewRecorder()
+	h.Mux().ServeHTTP(w, req)
+
+	var resp []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if len(resp) != 0 {
+		t.Errorf("expected 0 matching claims, got %d", len(resp))
+	}
+}
